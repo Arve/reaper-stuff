@@ -1,0 +1,105 @@
+desc:Matrix upmixer
+//tags: processing FFT phase surround
+
+slider1:0<-120,0,0.1>Rear Volume
+slider2:15<0,200,1>Rear Delay (ms)
+slider3:2<0,4,1{1024,2048,4096,8192}>FFT Size
+
+in_pin:left input
+in_pin:right input
+
+out_pin:Out 1 (FL)
+out_pin:Out 2 (FR)
+out_pin:Out 3 (SL)
+out_pin:Out 4 (SR)
+
+@init 
+  bpos=0;
+  fftsize = -1;
+  ch_delay=-1;
+  // array pointers
+  window=0;
+  buf0 = 16384;
+  buf1 = 32768;
+
+  // Channel mixing
+  m5 = sqrt(2/3);
+  m6 = sqrt(1/3);
+
+  phaseadj = -$pi/2;
+  cadj = cos(phaseadj);
+  sadj = sin(phaseadj);
+
+@slider
+  
+
+  sliderdelay = -floor(slider2*srate*0.001);
+  sliderfft = (2^(slider3+10))|0;
+  ((fftsize != sliderfft) | (sliderdelay != ch_delay)) ? (
+    pos = 0;
+    memset(buf0, 0, 2*fftsize);
+    memset(buf1, 0, 2*fftsize);  
+    memset(window, 0, fftsize); 
+    fftsize = sliderfft;
+    ch_delay = sliderdelay;
+    w = 2.0*$pi/fftsize;
+    i = 0;
+    loop(fftsize/2,
+      window[i] = 0.42-0.50*cos(i*w)+0.08*cos(2.0*i*w);
+      i += 1;
+    ); 
+    pdc_delay = fftsize+ch_delay;
+  );  
+  pdc_top_ch = 4;    
+  pdc_bot_ch = 2;
+  vol=2 ^ (slider1/6);
+
+@sample
+  pos >= fftsize ? (
+    tmp = buf0;
+    buf0 = buf1;
+    buf1 = tmp;
+
+    fft(buf0, fftsize);
+    fft_permute(buf0, fftsize);
+
+    i = 0;
+    loop(fftsize/2, 
+      a = i;
+      b = a+1;
+      x = buf0[a];
+      y = buf0[b];
+      buf0[a] = x*cadj-y*sadj;
+      buf0[b] = x*sadj+y*cadj;
+
+      a = 2*fftsize-i-2;
+      b = a+1;
+      x = buf0[a];
+      y = buf0[b];
+      buf0[a] = x*cadj+y*sadj;
+      buf0[b] = -x*sadj+y*cadj;
+      i += 2);
+    fft_ipermute(buf0, fftsize);
+    ifft(buf0, fftsize);
+    pos=0;
+  );
+
+  w1 = window[pos/2];
+  w2 = window[(fftsize-pos)/2-1];
+  sw = (w1+w2)*fftsize;
+
+  out0 = (buf0[pos]+buf1[fftsize+pos])/sw;
+  out1 = (buf0[pos+1]+buf1[fftsize+pos+1])/sw;
+  o0rev = -out0;
+  o1rev = -out1;
+  
+  
+  buf0[pos] = w1*spl0;
+  buf0[pos+1] = w1*spl1;
+  buf1[fftsize+pos] = w2*spl0;
+  buf1[fftsize+pos+1] = w2*spl1;
+
+  spl2 = (out0*m5 + o1rev*m6)*vol;
+  spl3 = (out0*m6 + o1rev*m5)*vol;
+
+  pos += 2; 
